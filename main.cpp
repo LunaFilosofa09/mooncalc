@@ -11,6 +11,7 @@
 
 #include "bigint.hpp"
 #include "calculator.hpp"
+#include "format.hpp"
 #include "lineedit.hpp"
 #include "numeric.hpp"
 #include "units.hpp"
@@ -129,25 +130,8 @@ void help(const std::string& topic) {
            "Commands     deg | rad   vars   funcs   help functions   quit"});
 }
 
-std::string fmt(Num v) {
-    if (std::isnan(v)) return "nan";
-    if (std::isinf(v)) return v > 0 ? "inf" : "-inf";
-    if (std::fabs(v) < 1e-14L) v = 0;
-    std::ostringstream os;
-    os.precision(15);
-    os << v;
-    return os.str();
-}
-
-std::string fmtComplex(const Complex& z) {
-    if (isReal(z)) return fmt(z.real());
-    Num re = std::fabs(z.real()) < 1e-14L ? 0 : z.real();
-    Num im = z.imag();
-    std::string mag = std::fabs(std::fabs(im) - 1) < 1e-14L ? "" : fmt(std::fabs(im));
-    bool neg = im < 0;
-    if (re == 0) return std::string(neg ? "-" : "") + mag + "i";
-    return fmt(re) + (neg ? " - " : " + ") + mag + "i";
-}
+inline std::string fmt(Num v) { return fmtx::number(v); }
+inline std::string fmtComplex(const Complex& z) { return fmtx::complex(z); }
 
 void result(const std::string& text) {
     std::cout << "  " << fg(kBorder) << "▸ " << bold() << fg(kText) << text << reset() << "\n";

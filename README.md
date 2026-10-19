@@ -14,13 +14,32 @@ rad ❯ solve x^2-5*x+6=0
   ▸ x2 = 3
 ```
 
+## Graphical interface (macOS)
+
+<p align="center">
+  <img src="docs/calculator.png" width="48%" alt="Calculator tab">
+  <img src="docs/equations.png" width="48%" alt="Equations tab">
+</p>
+
+A native macOS app with a black and purple theme and rounded controls, built with [Dear ImGui](https://github.com/ocornut/imgui) on Metal.
+
+```bash
+make gui
+./mooncalc-gui
+```
+
+- **Calculator tab:** result display, input field, a scientific keypad, a history panel (click an entry to reuse it) and your variables. Everything the terminal version evaluates works here, including functions you define, complex numbers and matrices.
+- **Equations tab:** type an equation or a linear system, optionally name the unknown, and get one card per solution. Click a card to copy its value.
+
+It needs macOS with the Xcode Command Line Tools (`xcode-select --install`). Dear ImGui v1.91.9 is vendored in `third_party/imgui` (MIT license), so nothing else has to be installed.
+
 ## Requirements
 
 | Requirement | Details |
 |---|---|
 | Operating system | macOS or Linux. Uses `<unistd.h>` (`isatty`); on Windows use WSL. |
 | Compiler | Any C++17 compiler (`clang++` 5+, `g++` 7+). |
-| Build tool | `make` (optional). |
+| Build tool | `make` (optional). The graphical interface also needs macOS and the Xcode Command Line Tools. |
 | Terminal | UTF-8 and 24-bit (truecolor) support, plus a font with Braille characters for `plot`, e.g. iTerm2, Kitty, Alacritty, GNOME Terminal, VS Code. A dark background looks best. |
 | Dependencies | None beyond the C++ standard library. |
 
@@ -158,10 +177,15 @@ bigfact 100   bigpow 2 200   bigfib 300         (exact big integers)
 value.hpp        scalar/complex/matrix value type and operators
 numeric.hpp      numeric algorithms: roots, integration, limits, primes
 calculator.hpp   parser, function library, equation solver
+format.hpp       number and value formatting shared by both interfaces
 bigint.hpp       exact big integers (factorial, power, Fibonacci)
 units.hpp        unit conversion table
 lineedit.hpp     terminal line editor with history
 main.cpp         terminal interface (colors, panels, plot, commands)
+gui_ui.hpp       graphical interface layout and theme (Dear ImGui)
+gui.mm           macOS window and Metal host for the graphical interface
+third_party/     vendored Dear ImGui
+docs/            screenshots
 Makefile         build and test targets
 tests/smoke.sh   end-to-end smoke tests
 ```
