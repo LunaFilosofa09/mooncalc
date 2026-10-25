@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,23 @@ struct State {
     std::string matResultText;
     std::string matError;
 
+    char statsX[8192] = "";
+    char statsY[8192] = "";
+    int statsBins = 0;
+    std::vector<Num> sx, sy;
+    std::string statsMessage = "ENTER DATA";
+    bool statsOk = false;
+    struct StatCard {
+        std::string name;
+        std::string value;
+    };
+    std::vector<StatCard> statCards;
+    bool hasFit = false;
+    stats::LinearFit fit;
+    Num pearson = 0, spearmanR = 0, covarianceS = 0;
+    double nMu = 0, nSigma = 1, nX = 0, nP = 0.975;
+    double ciLevel = 95, mu0 = 0;
+
     ImFont* small = nullptr;
     ImFont* regular = nullptr;
     ImFont* medium = nullptr;
@@ -134,6 +152,8 @@ inline void applyTheme() {
     c[ImGuiCol_Header] = col(pal::kPrimary, 0.14f);
     c[ImGuiCol_HeaderHovered] = col(pal::kPrimary, 0.28f);
     c[ImGuiCol_HeaderActive] = col(pal::kPrimary, 0.42f);
+    c[ImGuiCol_SliderGrab] = col(pal::kPrimary);
+    c[ImGuiCol_SliderGrabActive] = col(pal::kInk);
     c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_ScrollbarGrab] = col(pal::kLineDim);
     c[ImGuiCol_ScrollbarGrabHovered] = col(pal::kLine, 0.8f);
@@ -1046,6 +1066,489 @@ inline void matricesTab() {
     ImGui::EndChild();
 }
 
+inline bool parseNumbers(const char* text, std::vector<Num>& out, std::string& bad) {
+    out.clear();
+    std::string token;
+    auto flush = [&]() -> bool {
+        if (token.empty()) return true;
+        char* end = nullptr;
+        Num v = std::strtold(token.c_str(), &end);
+        if (*end != '\0' || !std::isfinite(v)) {
+            bad = token;
+            return false;
+        }
+        out.push_back(v);
+        token.clear();
+        return true;
+    };
+    for (const char* p = text; *p; ++p) {
+        if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',' || *p == ';') {
+            if (!flush()) return false;
+        } else {
+            token += *p;
+        }
+    }
+    return flush();
+}
+
+inline std::string statNumber(Num v) { return fmtx::number(numeric::roundSig(v, 10)); }
+
+inline void statsRefresh() {
+    S.statCards.clear();
+    S.hasFit = false;
+    S.statsOk = false;
+    std::string bad;
+    if (!parseNumbers(S.statsX, S.sx, bad)) {
+        S.sx.clear();
+        S.statsMessage = "INVALID TOKEN '" + upper(bad) + "' IN X";
+        return;
+    }
+    if (!parseNumbers(S.statsY, S.sy, bad)) {
+        S.sy.clear();
+        S.statsMessage = "INVALID TOKEN '" + upper(bad) + "' IN Y";
+        return;
+    }
+    if (S.sx.empty()) {
+        S.statsMessage = "ENTER DATA";
+        return;
+    }
+    S.statsOk = true;
+    const std::vector<Num>& v = S.sx;
+    char msg[96];
+    std::snprintf(msg, sizeof msg, "N = %04zu VALUES // STATUS: OK", v.size());
+    S.statsMessage = msg;
+
+    auto add = [&](const char* name, std::function<Num()> f) {
+        std::string value = "----";
+        try {
+            value = statNumber(f());
+        } catch (const CalcError&) {
+        }
+        S.statCards.push_back({name, value});
+    };
+    add("COUNT", [&] { return (Num)v.size(); });
+    add("SUM", [&] { return stats::sum(v); });
+    add("MEAN", [&] { return stats::mean(v); });
+    add("MEDIAN", [&] { return stats::median(v); });
+    add("MODE", [&] { return stats::mode(v); });
+    add("MIN", [&] { return *std::min_element(v.begin(), v.end()); });
+    add("MAX", [&] { return *std::max_element(v.begin(), v.end()); });
+    add("RANGE", [&] { return stats::range(v); });
+    add("Q1 (25%)", [&] { return stats::q1(v); });
+    add("Q3 (75%)", [&] { return stats::q3(v); });
+    add("IQR", [&] { return stats::iqr(v); });
+    add("STD (SAMPLE)", [&] { return stats::stddev(v, true); });
+    add("STD (POPULATION)", [&] { return stats::stddev(v, false); });
+    add("VARIANCE (SAMPLE)", [&] { return stats::variance(v, true); });
+    add("VARIANCE (POP.)", [&] { return stats::variance(v, false); });
+    add("STD ERROR", [&] { return stats::sem(v); });
+    add("COEF. OF VARIATION", [&] { return stats::cv(v); });
+    add("GEOMETRIC MEAN", [&] { return stats::geometricMean(v); });
+    add("HARMONIC MEAN", [&] { return stats::harmonicMean(v); });
+    add("RMS", [&] { return stats::rms(v); });
+    add("MEAN ABS DEV", [&] { return stats::meanAbsDev(v); });
+    add("MEDIAN ABS DEV", [&] { return stats::medianAbsDev(v); });
+    add("SKEWNESS", [&] { return stats::skewness(v); });
+    add("EXCESS KURTOSIS", [&] { return stats::kurtosis(v); });
+    add("OUTLIERS (1.5 IQR)", [&] { return (Num)stats::outliers(v).size(); });
+
+    if (!S.sy.empty()) {
+        if (S.sy.size() != S.sx.size()) {
+            S.statsMessage = "X AND Y NEED THE SAME LENGTH";
+        } else if (S.sx.size() >= 2) {
+            try {
+                S.fit = stats::linearFit(S.sx, S.sy);
+                S.pearson = stats::correlation(S.sx, S.sy);
+                S.spearmanR = stats::spearman(S.sx, S.sy);
+                S.covarianceS = stats::covariance(S.sx, S.sy, true);
+                S.hasFit = true;
+            } catch (const CalcError&) {
+            }
+        }
+    }
+}
+
+inline void statCard(const char* id, const std::string& name, const std::string& value, ImVec2 size) {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton(id, size);
+    bool hovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked()) {
+        ImGui::SetClipboardText(value.c_str());
+        S.toast = 1.6f;
+    }
+    ImVec2 q(pos.x + size.x, pos.y + size.y);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, q, col32(hovered ? pal::kPanel : pal::kSurface, 0.92f));
+    dl->AddRect(pos, q, col32(hovered ? pal::kLine : pal::kLineDim));
+    if (hovered) dl->AddRect(ImVec2(pos.x - 1, pos.y - 1), ImVec2(q.x + 1, q.y + 1), col32(pal::kGlow, 0.25f), 0, 0, 3.0f);
+    ImGui::PushFont(S.small);
+    dl->AddText(ImVec2(pos.x + 12, pos.y + 9), col32(pal::kInkMuted), name.c_str());
+    ImGui::PopFont();
+    ImGui::PushFont(S.regular);
+    ImVec2 ts = ImGui::CalcTextSize(value.c_str());
+    dl->PushClipRect(pos, q, true);
+    glowText(dl, ImVec2(pos.x + 12, q.y - ts.y - 9), col32(pal::kPrimary), value.c_str(), 1, false);
+    dl->PopClipRect();
+    ImGui::PopFont();
+}
+
+inline void cardGrid(const std::vector<State::StatCard>& cards, const char* prefix, float cardW, float cardH) {
+    float spacing = 8;
+    float avail = ImGui::GetContentRegionAvail().x - 4;
+    int perRow = std::max(1, (int)((avail + spacing) / (cardW + spacing)));
+    float width = (avail - spacing * (perRow - 1)) / perRow;
+    for (size_t i = 0; i < cards.size(); ++i) {
+        if (i % perRow != 0) ImGui::SameLine(0, spacing);
+        statCard((std::string(prefix) + std::to_string(i)).c_str(), cards[i].name, cards[i].value, ImVec2(width, cardH));
+    }
+}
+
+inline float cardGridHeight(size_t count, float avail, float cardW, float cardH) {
+    float spacing = 8;
+    int perRow = std::max(1, (int)((avail - 4 + spacing) / (cardW + spacing)));
+    int rows = ((int)count + perRow - 1) / perRow;
+    return (float)rows * (cardH + spacing) + 4;
+}
+
+inline void plotArea(ImDrawList* dl, ImVec2 a, ImVec2 b) {
+    dl->AddRectFilled(a, b, col32(pal::kBackground, 0.55f));
+    ImU32 gc = col32(pal::kGrid, 0.10f);
+    for (float x = a.x + 16; x < b.x; x += 16) dl->AddLine(ImVec2(x, a.y), ImVec2(x, b.y), gc);
+    for (float y = a.y + 16; y < b.y; y += 16) dl->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), gc);
+    dl->AddRect(a, b, col32(pal::kLineDim));
+}
+
+inline void smallText(ImDrawList* dl, ImVec2 pos, const std::string& text, unsigned color) {
+    ImGui::PushFont(S.small);
+    dl->AddText(pos, col32(color), text.c_str());
+    ImGui::PopFont();
+}
+
+inline float smallWidth(const std::string& text) {
+    ImGui::PushFont(S.small);
+    float w = ImGui::CalcTextSize(text.c_str()).x;
+    ImGui::PopFont();
+    return w;
+}
+
+inline void histogramPlot(ImVec2 size) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("hist", size);
+    ImVec2 a(origin.x + 46, origin.y + 8), b(origin.x + size.x - 8, origin.y + size.y - 28);
+    plotArea(dl, a, b);
+    if (!S.statsOk) return;
+
+    const std::vector<Num>& v = S.sx;
+    Num lo = *std::min_element(v.begin(), v.end()), hi = *std::max_element(v.begin(), v.end());
+    if (lo == hi) {
+        lo -= 0.5L;
+        hi += 0.5L;
+    }
+    int bins = S.statsBins > 0 ? S.statsBins : std::max(3, (int)std::ceil(std::log2((double)v.size())) + 1);
+    std::vector<int> counts(bins, 0);
+    Num width = (hi - lo) / bins;
+    for (Num x : v) {
+        int k = (int)std::floor((x - lo) / width);
+        counts[std::clamp(k, 0, bins - 1)]++;
+    }
+    int maxCount = *std::max_element(counts.begin(), counts.end());
+
+    bool curve = v.size() >= 2 && stats::stddev(v, false) > 0;
+    Num peak = 0;
+    Num mu = stats::mean(v), sigma = curve ? stats::stddev(v, false) : 1;
+    if (curve) peak = stats::normalPdf(mu, mu, sigma) * (Num)v.size() * width;
+    float ymax = (float)std::max<Num>(maxCount, peak) * 1.12f;
+
+    float pw = b.x - a.x, ph = b.y - a.y;
+    for (int i = 0; i < bins; ++i) {
+        float x0 = a.x + pw * (float)i / bins, x1 = a.x + pw * (float)(i + 1) / bins;
+        float y1 = b.y, y0 = b.y - ph * (float)counts[i] / ymax;
+        if (counts[i] == 0) continue;
+        dl->AddRectFilled(ImVec2(x0 + 1, y0), ImVec2(x1 - 1, y1), col32(pal::kPrimary, 0.28f));
+        dl->AddRect(ImVec2(x0 + 1, y0), ImVec2(x1 - 1, y1), col32(pal::kPrimary, 0.95f));
+    }
+    if (curve) {
+        std::vector<ImVec2> pts;
+        for (int i = 0; i <= 160; ++i) {
+            float t = (float)i / 160;
+            Num x = lo + (hi - lo) * t;
+            Num y = stats::normalPdf(x, mu, sigma) * (Num)v.size() * width;
+            pts.push_back(ImVec2(a.x + pw * t, b.y - ph * (float)y / ymax));
+        }
+        dl->AddPolyline(pts.data(), (int)pts.size(), col32(pal::kGlow, 0.30f), 0, 4.0f);
+        dl->AddPolyline(pts.data(), (int)pts.size(), col32(pal::kAberration), 0, 1.5f);
+    }
+    smallText(dl, ImVec2(origin.x + 4, a.y), std::to_string((int)std::ceil(ymax)), pal::kInkMuted);
+    smallText(dl, ImVec2(origin.x + 4, b.y - 14), "0", pal::kInkMuted);
+    smallText(dl, ImVec2(a.x, b.y + 6), statNumber(lo), pal::kInkMuted);
+    std::string hs = statNumber(hi);
+    smallText(dl, ImVec2(b.x - smallWidth(hs), b.y + 6), hs, pal::kInkMuted);
+    std::string info = std::to_string(bins) + " BINS" + (curve ? " // NORMAL FIT" : "");
+    smallText(dl, ImVec2(a.x + 8, a.y + 6), info, pal::kInk);
+}
+
+inline void boxPlot(ImVec2 size) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("box", size);
+    ImVec2 a(origin.x + 14, origin.y + 8), b(origin.x + size.x - 14, origin.y + size.y - 28);
+    plotArea(dl, a, b);
+    if (!S.statsOk) return;
+
+    const std::vector<Num>& v = S.sx;
+    auto sortedV = stats::sorted(v);
+    Num lo = sortedV.front(), hi = sortedV.back();
+    if (lo == hi) {
+        lo -= 1;
+        hi += 1;
+    }
+    Num pad = (hi - lo) * 0.06L;
+    Num x0 = lo - pad, x1 = hi + pad;
+    auto mapX = [&](Num x) { return a.x + (b.x - a.x) * (float)((x - x0) / (x1 - x0)); };
+    float cy = (a.y + b.y) / 2, half = std::min(34.0f, (b.y - a.y) * 0.28f);
+
+    Num q1v = stats::percentileSorted(sortedV, 0.25L), medv = stats::percentileSorted(sortedV, 0.5L),
+        q3v = stats::percentileSorted(sortedV, 0.75L);
+    stats::Fences f = stats::fences(v);
+    Num wl = sortedV.back(), wh = sortedV.front();
+    for (Num x : sortedV) {
+        if (x >= f.low) wl = std::min(wl, x);
+        if (x <= f.high) wh = std::max(wh, x);
+    }
+    ImU32 line = col32(pal::kLine), prim = col32(pal::kPrimary);
+    dl->AddLine(ImVec2(mapX(wl), cy), ImVec2(mapX(q1v), cy), line);
+    dl->AddLine(ImVec2(mapX(q3v), cy), ImVec2(mapX(wh), cy), line);
+    dl->AddLine(ImVec2(mapX(wl), cy - half * 0.5f), ImVec2(mapX(wl), cy + half * 0.5f), line);
+    dl->AddLine(ImVec2(mapX(wh), cy - half * 0.5f), ImVec2(mapX(wh), cy + half * 0.5f), line);
+    dl->AddRectFilled(ImVec2(mapX(q1v), cy - half), ImVec2(mapX(q3v), cy + half), col32(pal::kPrimary, 0.22f));
+    dl->AddRect(ImVec2(mapX(q1v) - 1, cy - half - 1), ImVec2(mapX(q3v) + 1, cy + half + 1), col32(pal::kGlow, 0.25f), 0, 0, 3.0f);
+    dl->AddRect(ImVec2(mapX(q1v), cy - half), ImVec2(mapX(q3v), cy + half), line);
+    dl->AddLine(ImVec2(mapX(medv), cy - half), ImVec2(mapX(medv), cy + half), prim, 2.0f);
+    Num m = stats::mean(v);
+    float mx = mapX(m);
+    dl->AddLine(ImVec2(mx - 5, cy), ImVec2(mx + 5, cy), col32(pal::kAccent), 1.5f);
+    dl->AddLine(ImVec2(mx, cy - 5), ImVec2(mx, cy + 5), col32(pal::kAccent), 1.5f);
+    for (Num x : sortedV)
+        if (x < f.low || x > f.high) dl->AddRect(ImVec2(mapX(x) - 3, cy - 3), ImVec2(mapX(x) + 3, cy + 3), prim);
+
+    smallText(dl, ImVec2(a.x, b.y + 6), statNumber(lo), pal::kInkMuted);
+    std::string hs = statNumber(hi);
+    smallText(dl, ImVec2(b.x - smallWidth(hs), b.y + 6), hs, pal::kInkMuted);
+    smallText(dl, ImVec2(a.x + 8, a.y + 6), "Q1 " + statNumber(q1v) + "  MED " + statNumber(medv) + "  Q3 " + statNumber(q3v), pal::kInk);
+    smallText(dl, ImVec2(a.x + 8, b.y - 18), "+ MEAN   [] OUTLIER", pal::kInkMuted);
+}
+
+inline void scatterPlot(ImVec2 size) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("scatter", size);
+    ImVec2 a(origin.x + 46, origin.y + 8), b(origin.x + size.x - 8, origin.y + size.y - 28);
+    plotArea(dl, a, b);
+    if (!S.statsOk || S.sy.size() != S.sx.size() || S.sx.size() < 2) {
+        smallText(dl, ImVec2(a.x + 10, a.y + 10), "ADD A Y SERIES OF THE SAME LENGTH", pal::kInkMuted);
+        return;
+    }
+    Num xl = *std::min_element(S.sx.begin(), S.sx.end()), xh = *std::max_element(S.sx.begin(), S.sx.end());
+    Num yl = *std::min_element(S.sy.begin(), S.sy.end()), yh = *std::max_element(S.sy.begin(), S.sy.end());
+    if (xl == xh) { xl -= 1; xh += 1; }
+    if (yl == yh) { yl -= 1; yh += 1; }
+    Num px = (xh - xl) * 0.05L, py = (yh - yl) * 0.08L;
+    xl -= px; xh += px; yl -= py; yh += py;
+    auto mapX = [&](Num x) { return a.x + (b.x - a.x) * (float)((x - xl) / (xh - xl)); };
+    auto mapY = [&](Num y) { return b.y - (b.y - a.y) * (float)((y - yl) / (yh - yl)); };
+
+    if (S.hasFit) {
+        ImVec2 p0(mapX(xl), mapY(S.fit.slope * xl + S.fit.intercept)), p1(mapX(xh), mapY(S.fit.slope * xh + S.fit.intercept));
+        dl->PushClipRect(a, b, true);
+        dl->AddLine(p0, p1, col32(pal::kGlow, 0.30f), 4.0f);
+        dl->AddLine(p0, p1, col32(pal::kAberration), 1.5f);
+        dl->PopClipRect();
+    }
+    for (size_t i = 0; i < S.sx.size(); ++i) {
+        ImVec2 p(mapX(S.sx[i]), mapY(S.sy[i]));
+        dl->AddRectFilled(ImVec2(p.x - 3, p.y - 3), ImVec2(p.x + 3, p.y + 3), col32(pal::kPrimary));
+        dl->AddRect(ImVec2(p.x - 4, p.y - 4), ImVec2(p.x + 4, p.y + 4), col32(pal::kGlow, 0.35f));
+    }
+    smallText(dl, ImVec2(origin.x + 4, a.y), statNumber(yh), pal::kInkMuted);
+    smallText(dl, ImVec2(origin.x + 4, b.y - 14), statNumber(yl), pal::kInkMuted);
+    smallText(dl, ImVec2(a.x, b.y + 6), statNumber(xl), pal::kInkMuted);
+    std::string hs = statNumber(xh);
+    smallText(dl, ImVec2(b.x - smallWidth(hs), b.y + 6), hs, pal::kInkMuted);
+    if (S.hasFit)
+        smallText(dl, ImVec2(a.x + 8, a.y + 6), "Y = " + statNumber(S.fit.slope) + " X + " + statNumber(S.fit.intercept), pal::kInk);
+}
+
+inline void dataBox(const char* id, const char* title, char* buffer, size_t size, float width) {
+    ImGui::BeginGroup();
+    label(title, col32(pal::kInk));
+    ImGui::PushFont(S.regular);
+    if (ImGui::InputTextMultiline(id, buffer, size, ImVec2(width, 96))) statsRefresh();
+    ImGui::PopFont();
+    ImGui::EndGroup();
+}
+
+inline void statisticsTab() {
+    ImGui::BeginChild("statistics", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImGui::PushFont(S.title);
+    glowText(dl, ImGui::GetCursorScreenPos(), col32(pal::kPrimary), "STATISTICS LAB", 1, true);
+    ImGui::Dummy(ImVec2(10, ImGui::GetTextLineHeight()));
+    ImGui::PopFont();
+    ImGui::PushStyleColor(ImGuiCol_Text, col(pal::kInkMuted));
+    ImGui::TextUnformatted("PASTE NUMBERS // SEPARATORS: SPACE, COMMA, NEWLINE // CLICK A CARD TO COPY ITS VALUE");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, 2));
+
+    static bool first = true;
+    if (first) {
+        first = false;
+        statsRefresh();
+    }
+
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    beginPanel("statsData", ImVec2(0, 214), 14, false, ImVec2(20, 14));
+    float half = (ImGui::GetContentRegionAvail().x - spacing) / 2;
+    dataBox("##sx", "SERIES X (DATA)", S.statsX, sizeof S.statsX, half);
+    ImGui::SameLine();
+    dataBox("##sy", "SERIES Y (OPTIONAL, FOR REGRESSION)", S.statsY, sizeof S.statsY, half);
+    ImGui::PushFont(S.regular);
+    if (ghostButton("> SAMPLE", ImVec2(130, 34), Kind::Operator)) {
+        std::snprintf(S.statsX, sizeof S.statsX, "%s", "2 4 4 4 5 5 7 9 11 12 12 13 15 21 40");
+        std::snprintf(S.statsY, sizeof S.statsY, "%s", "3 5 6 5 8 9 10 12 14 15 17 17 20 28 45");
+        statsRefresh();
+    }
+    ImGui::SameLine();
+    if (ghostButton("> CLEAR", ImVec2(120, 34), Kind::Action)) {
+        S.statsX[0] = S.statsY[0] = '\0';
+        statsRefresh();
+    }
+    ImGui::SameLine();
+    ImGui::PopFont();
+    ImGui::PushFont(S.small);
+    ImGui::PushStyleColor(ImGuiCol_Text, col(S.statsOk ? pal::kPrimary : pal::kInkMuted));
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 9);
+    ImGui::TextUnformatted(S.statsMessage.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    endPanel();
+
+    if (!S.statsOk) {
+        ImGui::EndChild();
+        return;
+    }
+
+    float avail = ImGui::GetContentRegionAvail().x;
+    float summaryH = 62 + cardGridHeight(S.statCards.size(), avail - 40, 190, 58);
+    beginPanel("statsSummary", ImVec2(0, summaryH), 14, true, ImVec2(20, 14));
+    label("SUMMARY", col32(pal::kInk));
+    ImGui::Dummy(ImVec2(0, 2));
+    cardGrid(S.statCards, "sc", 190, 58);
+    endPanel();
+
+    float plotH = 300;
+    float w1 = (avail - spacing) * 0.58f, w2 = avail - spacing - w1;
+    beginPanel("statsHist", ImVec2(w1, plotH), 14, false, ImVec2(18, 14));
+    label("HISTOGRAM", col32(pal::kInk));
+    ImGui::SameLine();
+    ImGui::PushFont(S.small);
+    ImGui::SetNextItemWidth(150);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - 150));
+    ImGui::SliderInt("##bins", &S.statsBins, 0, 40, S.statsBins == 0 ? "BINS: AUTO" : "BINS: %d");
+    ImGui::PopFont();
+    histogramPlot(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
+    endPanel();
+    ImGui::SameLine();
+    beginPanel("statsBox", ImVec2(w2, plotH), 14, false, ImVec2(18, 14));
+    label("BOXPLOT", col32(pal::kInk));
+    boxPlot(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
+    endPanel();
+
+    beginPanel("statsScatter", ImVec2(w1, plotH), 14, false, ImVec2(18, 14));
+    label("SCATTER // LINEAR REGRESSION", col32(pal::kInk));
+    scatterPlot(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y));
+    endPanel();
+    ImGui::SameLine();
+    beginPanel("statsFit", ImVec2(w2, plotH), 14, true, ImVec2(18, 14));
+    label("REGRESSION", col32(pal::kInk));
+    ImGui::Dummy(ImVec2(0, 2));
+    if (S.hasFit) {
+        std::vector<State::StatCard> fitCards = {{"SLOPE", statNumber(S.fit.slope)},      {"INTERCEPT", statNumber(S.fit.intercept)},
+                                                 {"R SQUARED", statNumber(S.fit.r2)},     {"PEARSON R", statNumber(S.pearson)},
+                                                 {"SPEARMAN RHO", statNumber(S.spearmanR)}, {"COVARIANCE", statNumber(S.covarianceS)}};
+        cardGrid(fitCards, "fc", 150, 58);
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, col(pal::kInkMuted));
+        ImGui::TextUnformatted("----  NEEDS A Y SERIES WITH THE SAME LENGTH AS X.");
+        ImGui::PopStyleColor();
+    }
+    endPanel();
+
+    beginPanel("statsInference", ImVec2(0, 440), 14, true, ImVec2(20, 14));
+    ImGui::PushFont(S.regular);
+    label("INFERENCE // MEAN", col32(pal::kInk));
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputDouble("##ci", &S.ciLevel, 0, 0, "LEVEL %.4g %%");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(170);
+    ImGui::InputDouble("##mu0", &S.mu0, 0, 0, "H0: MEAN = %.6g");
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 2));
+    std::vector<State::StatCard> inf;
+    try {
+        auto interval = stats::confidenceInterval(S.sx, (Num)S.ciLevel / 100);
+        inf.push_back({"CI LOW", statNumber(interval.first)});
+        inf.push_back({"CI HIGH", statNumber(interval.second)});
+        stats::TTest t = stats::oneSampleT(S.sx, (Num)S.mu0);
+        inf.push_back({"T STATISTIC", statNumber(t.t)});
+        inf.push_back({"DEGREES OF FREEDOM", statNumber(t.df)});
+        inf.push_back({"P VALUE (2-SIDED)", statNumber(t.p)});
+        inf.push_back({"DECISION", t.p < 1 - (Num)S.ciLevel / 100 ? "REJECT H0" : "FAIL TO REJECT"});
+    } catch (const CalcError& e) {
+        inf.push_back({"STATUS", upper(e.what())});
+    }
+    cardGrid(inf, "ic", 190, 58);
+
+    ImGui::Dummy(ImVec2(0, 6));
+    ImVec2 lp = ImGui::GetCursorScreenPos();
+    dl->AddLine(lp, ImVec2(lp.x + ImGui::GetContentRegionAvail().x, lp.y), col32(pal::kLineDim));
+    ImGui::Dummy(ImVec2(0, 6));
+    ImGui::PushFont(S.regular);
+    label("NORMAL DISTRIBUTION", col32(pal::kInk));
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputDouble("##nmu", &S.nMu, 0, 0, "MU %.6g");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputDouble("##nsigma", &S.nSigma, 0, 0, "SIGMA %.6g");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputDouble("##nx", &S.nX, 0, 0, "X %.6g");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(130);
+    ImGui::InputDouble("##np", &S.nP, 0, 0, "P %.6g");
+    ImGui::SameLine();
+    if (ghostButton("> USE DATA", ImVec2(130, 0), Kind::Operator)) {
+        S.nMu = (double)stats::mean(S.sx);
+        if (S.sx.size() >= 2) S.nSigma = (double)stats::stddev(S.sx, true);
+        S.nX = S.nMu;
+    }
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 2));
+    std::vector<State::StatCard> dist;
+    if (S.nSigma > 0) {
+        dist.push_back({"PDF(X)", statNumber(stats::normalPdf((Num)S.nX, (Num)S.nMu, (Num)S.nSigma))});
+        dist.push_back({"CDF(X) = P(Z <= X)", statNumber(stats::normalCdf((Num)S.nX, (Num)S.nMu, (Num)S.nSigma))});
+        dist.push_back({"P(Z > X)", statNumber(1 - stats::normalCdf((Num)S.nX, (Num)S.nMu, (Num)S.nSigma))});
+        dist.push_back({"Z SCORE", statNumber(((Num)S.nX - (Num)S.nMu) / (Num)S.nSigma)});
+        if (S.nP > 0 && S.nP < 1) dist.push_back({"INVERSE CDF(P)", statNumber(stats::normalInv((Num)S.nP, (Num)S.nMu, (Num)S.nSigma))});
+    } else {
+        dist.push_back({"STATUS", "SIGMA MUST BE > 0"});
+    }
+    cardGrid(dist, "dc", 190, 58);
+    endPanel();
+    ImGui::EndChild();
+}
+
 inline bool tabButton(const char* text, bool active, float width) {
     float height = 38;
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -1145,14 +1648,17 @@ inline void frame() {
     if (tabButton("02  EQUATIONS", S.tab == 1, tabW)) S.tab = 1;
     ImGui::SameLine(0, 6);
     if (tabButton("03  MATRICES", S.tab == 2, tabW)) S.tab = 2;
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowStart.x + 3 * tabW + 12, rowStart.y + 38), ImVec2(rowStart.x + full, rowStart.y + 38),
+    ImGui::SameLine(0, 6);
+    if (tabButton("04  STATISTICS", S.tab == 3, tabW)) S.tab = 3;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowStart.x + 4 * tabW + 18, rowStart.y + 38), ImVec2(rowStart.x + full, rowStart.y + 38),
                                         col32(pal::kLineDim));
     ImGui::Dummy(ImVec2(0, 10));
     ImGui::PopFont();
 
     if (S.tab == 0) calculatorTab();
     else if (S.tab == 1) equationsTab();
-    else matricesTab();
+    else if (S.tab == 2) matricesTab();
+    else statisticsTab();
 
     ImGui::End();
     overlay(vp);

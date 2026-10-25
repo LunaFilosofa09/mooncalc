@@ -23,6 +23,7 @@ rad > solve x^2-5*x+6=0
 </p>
 <p align="center">
   <img src="docs/matrices.png" width="48%" alt="Matrices tab">
+  <img src="docs/statistics.png" width="48%" alt="Statistics tab">
 </p>
 
 A native macOS app in the Ghost Signal style (CRT scanlines and vignette, violet neon glow, beveled panels, corner brackets, monospaced HUD labels), built with [Dear ImGui](https://github.com/ocornut/imgui) on Metal.
@@ -33,6 +34,7 @@ make gui
 ```
 
 - **Calculator tab:** result display, input field, a scientific keypad, a history panel (click an entry to reuse it) and your variables. Everything the terminal version evaluates works here, including functions you define, complex numbers and matrices.
+- **Statistics tab:** paste one or two series (separated by spaces, commas or new lines) and get 25 summary cards, a histogram with a fitted normal curve, a boxplot with outliers, a scatter plot with the regression line and its coefficients, confidence interval and t-test for the mean, and a normal distribution calculator. Click any card to copy its value.
 - **Matrices tab:** two editable grids (A and B, up to 6x6, cells accept expressions), one-click operations (A+B, A*B, A\\B, det, inv, rank, rref, nullspace, expm, cond, ...) and the result drawn as a grid. Use the result as the new A or B, or copy it. A and B are also stored as variables for the calculator tab.
 - **Equations tab:** type an equation or a linear system, optionally name the unknown, and get one card per solution. Click a card to copy its value.
 
@@ -105,7 +107,7 @@ Run `help functions` inside the program for the full list.
 - Rounding: `floor ceil round trunc sign`
 - Special: `fact gamma lgamma beta erf erfc fib`
 - Number theory: `gcd lcm nCr nPr isprime`
-- Statistics: `mean median var varp std stdp count min max sum prod linreg corr normpdf normcdf`
+- Statistics, distributions and inference: see the Statistics section
 - Matrices and vectors: `det inv transpose trace rank eye zeros ones rows cols norm dot cross`
 
 ### Matrices
@@ -127,7 +129,33 @@ dot(u,v)  cross(u,v)
 
 `cond` uses the 1-norm and returns `inf` for singular matrices. Write `2 .^[1,2,3]` or `2.^[1,2,3]` for element-wise powers with a scalar base.
 
-Statistics functions accept lists or matrices: `mean([1,2,3,4])`, `linreg([1,2,3],[2,4,6])` (returns slope, intercept, R²).
+### Statistics
+
+All functions accept lists or matrices: `mean([1,2,3,4])`, `mean(1,2,3,4)`, `std(d)`.
+
+| Group | Functions |
+|---|---|
+| Center | `mean median mode gmean hmean rms` (arithmetic, middle, most frequent, geometric, harmonic, root mean square) |
+| Spread | `range var varp std stdp sem cv mad medad` (sample and population variance and deviation, standard error, coefficient of variation, mean and median absolute deviation) |
+| Position | `min max q1 q3 iqr quartiles fivenum percentile(data,p) zscore` |
+| Shape | `skew kurt` (population skewness and excess kurtosis), `outliers` (1.5 x IQR rule) |
+| Series | `count sum prod cumsum sort` |
+| Two variables | `cov covp corr spearman linreg(xs,ys)` (`linreg` returns slope, intercept and R squared) |
+| Distributions | `normpdf normcdf norminv binompdf binomcdf poissonpdf poissoncdf tcdf tinv` |
+| Inference | `ci(data, level)` confidence interval of the mean (Student t), `ttest(data, mu0)` returns `[t, df, p]` (two-sided one-sample test) |
+
+Quartiles and percentiles use linear interpolation (the same convention as Excel's `QUARTILE.INC` and NumPy's default). `skew` and `kurt` are the population versions (`kurt` is excess kurtosis, so a normal distribution gives 0). `percentile(data, 90)` takes a value between 0 and 100, while `ci` takes a level such as `0.95`.
+
+```
+d = [2,4,4,4,5,5,7,9]
+quartiles(d)           [ 4  4.5  5.5 ]
+fivenum(d)             [ 2  4  4.5  5.5  9 ]
+std(d)  stdp(d)        2.1380899  2
+norminv(0.975)         1.959963985
+binompdf(3,10,0.5)     0.1171875
+ci(d, 0.99)            [ 2.354639  7.645361 ]
+ttest(d, 4)            [ 1.3228757  7  0.2274528 ]
+```
 
 ### Calculus
 
@@ -193,6 +221,7 @@ bigfact 100   bigpow 2 200   bigfib 300         (exact big integers)
 value.hpp        scalar/complex/matrix value type and operators
 numeric.hpp      numeric algorithms: roots, integration, limits, primes
 calculator.hpp   parser, function library, equation solver
+stats.hpp        descriptive statistics, distributions, confidence intervals, t-test
 format.hpp       number and value formatting shared by both interfaces
 bigint.hpp       exact big integers (factorial, power, Fibonacci)
 units.hpp        unit conversion table

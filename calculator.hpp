@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "numeric.hpp"
+#include "stats.hpp"
 #include "value.hpp"
 
 struct Solution {
@@ -863,6 +864,94 @@ private:
             Num sigma = a.size() > 2 ? scalarReal(a[2], "normcdf") : 1;
             if (sigma <= 0) throw CalcError("sigma must be positive");
             return Value(0.5L * std::erfc(-(x - mu) / (sigma * std::sqrt(2.0L))));
+        });
+
+        auto stat1 = [this](const std::string& n, std::function<Num(const std::vector<Num>&)> f) {
+            addFn(n, 1, -1, [n, f](const std::vector<Value>& a) { return Value(f(flatten(a, n))); });
+        };
+        auto rowOf = [](const std::vector<Num>& v) {
+            Matrix m(1, v.size());
+            for (size_t i = 0; i < v.size(); ++i) m.at(0, i) = v[i];
+            return Value(m);
+        };
+        stat1("q1", [](const std::vector<Num>& v) { return stats::q1(v); });
+        stat1("q3", [](const std::vector<Num>& v) { return stats::q3(v); });
+        stat1("iqr", [](const std::vector<Num>& v) { return stats::iqr(v); });
+        stat1("range", [](const std::vector<Num>& v) { return stats::range(v); });
+        stat1("mode", [](const std::vector<Num>& v) { return stats::mode(v); });
+        stat1("gmean", [](const std::vector<Num>& v) { return stats::geometricMean(v); });
+        stat1("hmean", [](const std::vector<Num>& v) { return stats::harmonicMean(v); });
+        stat1("rms", [](const std::vector<Num>& v) { return stats::rms(v); });
+        stat1("mad", [](const std::vector<Num>& v) { return stats::meanAbsDev(v); });
+        stat1("medad", [](const std::vector<Num>& v) { return stats::medianAbsDev(v); });
+        stat1("sem", [](const std::vector<Num>& v) { return stats::sem(v); });
+        stat1("cv", [](const std::vector<Num>& v) { return stats::cv(v); });
+        stat1("skew", [](const std::vector<Num>& v) { return stats::skewness(v); });
+        stat1("kurt", [](const std::vector<Num>& v) { return stats::kurtosis(v); });
+        addFn("quartiles", 1, -1, [rowOf](const std::vector<Value>& a) {
+            auto v = flatten(a, "quartiles");
+            return rowOf({stats::q1(v), stats::median(v), stats::q3(v)});
+        });
+        addFn("fivenum", 1, -1, [rowOf](const std::vector<Value>& a) {
+            auto v = stats::sorted(flatten(a, "fivenum"));
+            return rowOf({v.front(), stats::percentileSorted(v, 0.25L), stats::percentileSorted(v, 0.5L),
+                          stats::percentileSorted(v, 0.75L), v.back()});
+        });
+        addFn("percentile", 2, 2, [](const std::vector<Value>& a) {
+            Num p = scalarReal(a[1], "percentile");
+            if (p < 0 || p > 100) throw CalcError("percentile must be between 0 and 100");
+            return Value(stats::percentile(flatten({a[0]}, "percentile"), p / 100));
+        });
+        addFn("outliers", 1, -1, [rowOf](const std::vector<Value>& a) {
+            auto o = stats::outliers(flatten(a, "outliers"));
+            if (o.empty()) throw CalcError("no outliers found (1.5 x IQR rule)");
+            return rowOf(o);
+        });
+        addFn("zscore", 1, -1, [rowOf](const std::vector<Value>& a) { return rowOf(stats::zscores(flatten(a, "zscore"))); });
+        addFn("cumsum", 1, -1, [rowOf](const std::vector<Value>& a) { return rowOf(stats::cumulativeSum(flatten(a, "cumsum"))); });
+        addFn("sort", 1, -1, [rowOf](const std::vector<Value>& a) { return rowOf(stats::sorted(flatten(a, "sort"))); });
+        addFn("cov", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::covariance(vectorOf(a[0], "cov"), vectorOf(a[1], "cov"), true));
+        });
+        addFn("covp", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::covariance(vectorOf(a[0], "covp"), vectorOf(a[1], "covp"), false));
+        });
+        addFn("spearman", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::spearman(vectorOf(a[0], "spearman"), vectorOf(a[1], "spearman")));
+        });
+        addFn("norminv", 1, 3, [](const std::vector<Value>& a) {
+            Num mu = a.size() > 1 ? scalarReal(a[1], "norminv") : 0, sigma = a.size() > 2 ? scalarReal(a[2], "norminv") : 1;
+            if (sigma <= 0) throw CalcError("sigma must be positive");
+            return Value(stats::normalInv(scalarReal(a[0], "norminv"), mu, sigma));
+        });
+        addFn("binompdf", 3, 3, [](const std::vector<Value>& a) {
+            return Value(stats::binomialPmf(numeric::toInteger(scalarReal(a[0], "binompdf"), "k"),
+                                            numeric::toInteger(scalarReal(a[1], "binompdf"), "n"), scalarReal(a[2], "binompdf")));
+        });
+        addFn("binomcdf", 3, 3, [](const std::vector<Value>& a) {
+            return Value(stats::binomialCdf(numeric::toInteger(scalarReal(a[0], "binomcdf"), "k"),
+                                            numeric::toInteger(scalarReal(a[1], "binomcdf"), "n"), scalarReal(a[2], "binomcdf")));
+        });
+        addFn("poissonpdf", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::poissonPmf(numeric::toInteger(scalarReal(a[0], "poissonpdf"), "k"), scalarReal(a[1], "poissonpdf")));
+        });
+        addFn("poissoncdf", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::poissonCdf(numeric::toInteger(scalarReal(a[0], "poissoncdf"), "k"), scalarReal(a[1], "poissoncdf")));
+        });
+        addFn("tcdf", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::tCdf(scalarReal(a[0], "tcdf"), scalarReal(a[1], "tcdf")));
+        });
+        addFn("tinv", 2, 2, [](const std::vector<Value>& a) {
+            return Value(stats::tInv(scalarReal(a[0], "tinv"), scalarReal(a[1], "tinv")));
+        });
+        addFn("ci", 1, 2, [rowOf](const std::vector<Value>& a) {
+            Num level = a.size() > 1 ? scalarReal(a[1], "ci") : 0.95L;
+            auto interval = stats::confidenceInterval(flatten({a[0]}, "ci"), level);
+            return rowOf({interval.first, interval.second});
+        });
+        addFn("ttest", 2, 2, [rowOf](const std::vector<Value>& a) {
+            stats::TTest r = stats::oneSampleT(flatten({a[0]}, "ttest"), scalarReal(a[1], "ttest"));
+            return rowOf({r.t, r.df, r.p});
         });
 
         addFn("det", 1, 1, [](const std::vector<Value>& a) { return Value(mat::determinant(matrixArg(a[0], "det"))); });
