@@ -66,6 +66,18 @@ struct State {
     std::string equationError;
     float toast = 0.0f;
 
+    struct MatrixEditor {
+        int rows = 3;
+        int cols = 3;
+        char cell[6][6][24] = {};
+    };
+    MatrixEditor matA, matB;
+    std::string matOp;
+    bool matHasResult = false;
+    Value matResult;
+    std::string matResultText;
+    std::string matError;
+
     ImFont* small = nullptr;
     ImFont* regular = nullptr;
     ImFont* medium = nullptr;
@@ -813,6 +825,227 @@ inline void equationsTab() {
     endPanel();
 }
 
+inline std::string matrixLiteral(const State::MatrixEditor& m) {
+    std::string s = "[";
+    for (int i = 0; i < m.rows; ++i) {
+        if (i) s += ";";
+        for (int j = 0; j < m.cols; ++j) {
+            std::string cell = trimmed(m.cell[i][j]);
+            s += (j ? "," : "") + (cell.empty() ? std::string("0") : cell);
+        }
+    }
+    return s + "]";
+}
+
+inline void runMatrixOp(const std::string& expression) {
+    S.matHasResult = false;
+    S.matError.clear();
+    S.matOp = expression;
+    try {
+        S.calc.execute("A = " + matrixLiteral(S.matA));
+        S.calc.execute("B = " + matrixLiteral(S.matB));
+        Outcome out = S.calc.execute(expression);
+        S.matResult = out.value;
+        S.matResultText = fmtx::inlineValue(out.value);
+        S.matHasResult = true;
+    } catch (const CalcError& e) {
+        S.matError = e.what();
+    }
+}
+
+inline void useResultAs(State::MatrixEditor& target) {
+    if (!S.matHasResult) return;
+    std::memset(target.cell, 0, sizeof target.cell);
+    if (!S.matResult.isMatrix) {
+        target.rows = target.cols = 1;
+        std::snprintf(target.cell[0][0], sizeof target.cell[0][0], "%s", fmtx::complex(S.matResult.scalar).c_str());
+        return;
+    }
+    const Matrix& m = S.matResult.matrix;
+    target.rows = (int)std::min<size_t>(m.rows, 6);
+    target.cols = (int)std::min<size_t>(m.cols, 6);
+    for (int i = 0; i < target.rows; ++i)
+        for (int j = 0; j < target.cols; ++j)
+            std::snprintf(target.cell[i][j], sizeof target.cell[i][j], "%s", fmtx::complex(m.at(i, j)).c_str());
+}
+
+inline void matrixEditor(const char* id, const char* title, State::MatrixEditor& m, float width, float height) {
+    beginPanel(id, ImVec2(width, height), 14, false, ImVec2(20, 16));
+    char head[48];
+    std::snprintf(head, sizeof head, "%s  [%dx%d]", title, m.rows, m.cols);
+    label(head, col32(pal::kInk));
+    ImGui::Dummy(ImVec2(0, 2));
+
+    ImGui::PushFont(S.small);
+    float bh = 30;
+    struct Control {
+        const char* text;
+        int kind;
+    } controls[] = {{"ROW -", 0}, {"ROW +", 1}, {"COL -", 2}, {"COL +", 3}, {"IDENT", 4}, {"CLEAR", 5}};
+    for (int k = 0; k < 6; ++k) {
+        if (k) ImGui::SameLine(0, 6);
+        ImGui::PushID(k);
+        if (ghostButton(controls[k].text, ImVec2(64, bh), Kind::Function)) {
+            switch (controls[k].kind) {
+                case 0: m.rows = std::max(1, m.rows - 1); break;
+                case 1: m.rows = std::min(6, m.rows + 1); break;
+                case 2: m.cols = std::max(1, m.cols - 1); break;
+                case 3: m.cols = std::min(6, m.cols + 1); break;
+                case 4:
+                    std::memset(m.cell, 0, sizeof m.cell);
+                    for (int i = 0; i < std::min(m.rows, m.cols); ++i) std::snprintf(m.cell[i][i], sizeof m.cell[i][i], "1");
+                    break;
+                default: std::memset(m.cell, 0, sizeof m.cell); break;
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(0, 4));
+
+    ImGui::PushFont(S.regular);
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float cell = std::min(86.0f, (ImGui::GetContentRegionAvail().x - spacing * (m.cols - 1)) / m.cols);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 9));
+    for (int i = 0; i < m.rows; ++i) {
+        for (int j = 0; j < m.cols; ++j) {
+            if (j) ImGui::SameLine();
+            ImGui::PushID(i * 10 + j);
+            ImGui::SetNextItemWidth(cell);
+            ImGui::InputText("##c", m.cell[i][j], sizeof m.cell[i][j]);
+            ImGui::PopID();
+        }
+    }
+    ImGui::PopStyleVar();
+    ImGui::PopFont();
+    endPanel();
+}
+
+inline void resultGrid() {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!S.matError.empty()) {
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        float w = ImGui::GetContentRegionAvail().x;
+        std::string msg = "ERR  " + upper(S.matError);
+        float h = ImGui::CalcTextSize(msg.c_str(), nullptr, false, w - 36).y + 24;
+        dl->AddRectFilled(pos, ImVec2(pos.x + w, pos.y + h), col32(pal::kSignal, 0.08f));
+        dl->AddRect(pos, ImVec2(pos.x + w, pos.y + h), col32(pal::kSignal));
+        dl->AddRect(ImVec2(pos.x - 1, pos.y - 1), ImVec2(pos.x + w + 1, pos.y + h + 1), col32(pal::kSignal, 0.22f), 0, 0, 3.0f);
+        ImGui::SetCursorScreenPos(ImVec2(pos.x + 16, pos.y + 12));
+        ImGui::PushStyleColor(ImGuiCol_Text, col(pal::kSignal));
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w - 32);
+        ImGui::TextUnformatted(msg.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::SetCursorScreenPos(ImVec2(pos.x, pos.y + h + 8));
+        return;
+    }
+    if (!S.matHasResult) {
+        ImGui::PushStyleColor(ImGuiCol_Text, col(pal::kInkMuted));
+        ImGui::TextUnformatted("----  PICK AN OPERATION. A AND B ARE STORED AS VARIABLES.");
+        ImGui::PopStyleColor();
+        return;
+    }
+
+    if (!S.matResult.isMatrix) {
+        std::string text = fmtx::complex(S.matResult.scalar);
+        ImGui::PushFont(S.large);
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        glowText(dl, pos, col32(pal::kPrimary), text.c_str(), 2, true);
+        ImGui::Dummy(ImVec2(10, ImGui::GetTextLineHeight()));
+        ImGui::PopFont();
+        return;
+    }
+
+    const Matrix& m = S.matResult.matrix;
+    ImGui::PushFont(S.regular);
+    float avail = ImGui::GetContentRegionAvail().x;
+    float cell = std::min(130.0f, (avail - 6.0f * (m.cols - 1)) / (float)m.cols);
+    float cellH = ImGui::GetFontSize() + 18;
+    ImVec2 origin = ImGui::GetCursorScreenPos();
+    for (size_t i = 0; i < m.rows; ++i) {
+        for (size_t j = 0; j < m.cols; ++j) {
+            ImVec2 p(origin.x + (float)j * (cell + 6), origin.y + (float)i * (cellH + 6));
+            ImVec2 q(p.x + cell, p.y + cellH);
+            std::string text = fmtx::complex(numeric::roundSig(m.at(i, j), 8));
+            dl->AddRectFilled(p, q, col32(pal::kSurface, 0.92f));
+            dl->AddRect(p, q, col32(pal::kLineDim));
+            ImVec2 ts = ImGui::CalcTextSize(text.c_str());
+            ImVec2 tp(p.x + std::max(6.0f, (cell - ts.x) * 0.5f), p.y + (cellH - ts.y) * 0.5f);
+            dl->PushClipRect(p, q, true);
+            glowText(dl, tp, col32(pal::kPrimary), text.c_str(), 1, false);
+            dl->PopClipRect();
+        }
+    }
+    brackets(dl, ImVec2(origin.x - 6, origin.y - 4),
+             ImVec2(origin.x + (float)m.cols * (cell + 6) - 6 + 6, origin.y + (float)m.rows * (cellH + 6) - 6 + 4), 12,
+             col32(pal::kLine));
+    ImGui::Dummy(ImVec2(avail, (float)m.rows * (cellH + 6) + 6));
+    ImGui::PopFont();
+}
+
+inline void matricesTab() {
+    ImGui::BeginChild("matrices", ImVec2(0, 0), ImGuiChildFlags_None);
+    ImGui::PushFont(S.title);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    glowText(dl, ImGui::GetCursorScreenPos(), col32(pal::kPrimary), "MATRIX LAB", 1, true);
+    ImGui::Dummy(ImVec2(10, ImGui::GetTextLineHeight()));
+    ImGui::PopFont();
+    ImGui::PushStyleColor(ImGuiCol_Text, col(pal::kInkMuted));
+    ImGui::TextUnformatted("EDIT A AND B // CELLS ACCEPT EXPRESSIONS (PI, SQRT(2), 1/3)");
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0, 2));
+
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float width = (ImGui::GetContentRegionAvail().x - spacing) / 2;
+    float height = 112 + (float)std::max(S.matA.rows, S.matB.rows) * 46;
+    matrixEditor("matrixA", "MATRIX A", S.matA, width, height);
+    ImGui::SameLine();
+    matrixEditor("matrixB", "MATRIX B", S.matB, width, height);
+
+    beginPanel("ops", ImVec2(0, 130), 14, false, ImVec2(20, 14));
+    ImGui::PushFont(S.small);
+    ImGui::PopFont();
+    label("OPERATIONS", col32(pal::kInk));
+    ImGui::PushFont(S.regular);
+    struct Op {
+        const char* text;
+        const char* expr;
+    } ops[] = {{"A+B", "A+B"}, {"A-B", "A-B"}, {"A*B", "A*B"}, {"A.*B", "A.*B"}, {"A\\B", "A\\B"}, {"DET A", "det(A)"},
+               {"INV A", "inv(A)"}, {"TRANSPOSE A", "transpose(A)"}, {"RANK A", "rank(A)"}, {"TRACE A", "trace(A)"},
+               {"RREF A", "rref(A)"}, {"NULLSPACE A", "nullspace(A)"}, {"EXPM A", "expm(A)"}, {"COND A", "cond(A)"},
+               {"NORM A", "norm(A)"}, {"A^2", "A^2"}};
+    float line = ImGui::GetContentRegionAvail().x;
+    float used = 0;
+    for (const Op& op : ops) {
+        float w = ImGui::CalcTextSize(op.text).x + 30;
+        if (used > 0 && used + w + 8 > line) used = 0;
+        else if (used > 0) ImGui::SameLine();
+        if (ghostButton(op.text, ImVec2(w, 36), Kind::Operator)) runMatrixOp(op.expr);
+        used += w + 8;
+    }
+    ImGui::PopFont();
+    endPanel();
+
+    beginPanel("matrixResult", ImVec2(0, std::max(250.0f, ImGui::GetContentRegionAvail().y)), 14, true, ImVec2(22, 16));
+    std::string head = S.matOp.empty() ? "RESULT" : "RESULT // " + upper(S.matOp);
+    label(head.c_str(), col32(pal::kInk));
+    ImGui::Dummy(ImVec2(0, 4));
+    resultGrid();
+    if (S.matHasResult) {
+        ImGui::Dummy(ImVec2(0, 4));
+        ImGui::PushFont(S.small);
+        if (ghostButton("> USE AS A", ImVec2(120, 30), Kind::Function)) useResultAs(S.matA);
+        ImGui::SameLine();
+        if (ghostButton("> USE AS B", ImVec2(120, 30), Kind::Function)) useResultAs(S.matB);
+        ImGui::SameLine();
+        if (ghostButton("> COPY", ImVec2(100, 30), Kind::Function)) ImGui::SetClipboardText(S.matResultText.c_str());
+        ImGui::PopFont();
+    }
+    endPanel();
+    ImGui::EndChild();
+}
+
 inline bool tabButton(const char* text, bool active, float width) {
     float height = 38;
     ImVec2 p = ImGui::GetCursorScreenPos();
@@ -910,13 +1143,16 @@ inline void frame() {
     if (tabButton("01  CALCULATOR", S.tab == 0, tabW)) S.tab = 0;
     ImGui::SameLine(0, 6);
     if (tabButton("02  EQUATIONS", S.tab == 1, tabW)) S.tab = 1;
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowStart.x + 2 * tabW + 6, rowStart.y + 38), ImVec2(rowStart.x + full, rowStart.y + 38),
+    ImGui::SameLine(0, 6);
+    if (tabButton("03  MATRICES", S.tab == 2, tabW)) S.tab = 2;
+    ImGui::GetWindowDrawList()->AddLine(ImVec2(rowStart.x + 3 * tabW + 12, rowStart.y + 38), ImVec2(rowStart.x + full, rowStart.y + 38),
                                         col32(pal::kLineDim));
     ImGui::Dummy(ImVec2(0, 10));
     ImGui::PopFont();
 
     if (S.tab == 0) calculatorTab();
-    else equationsTab();
+    else if (S.tab == 1) equationsTab();
+    else matricesTab();
 
     ImGui::End();
     overlay(vp);

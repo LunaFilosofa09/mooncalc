@@ -21,6 +21,9 @@ rad > solve x^2-5*x+6=0
   <img src="docs/calculator.png" width="48%" alt="Calculator tab">
   <img src="docs/equations.png" width="48%" alt="Equations tab">
 </p>
+<p align="center">
+  <img src="docs/matrices.png" width="48%" alt="Matrices tab">
+</p>
 
 A native macOS app in the Ghost Signal style (CRT scanlines and vignette, violet neon glow, beveled panels, corner brackets, monospaced HUD labels), built with [Dear ImGui](https://github.com/ocornut/imgui) on Metal.
 
@@ -30,6 +33,7 @@ make gui
 ```
 
 - **Calculator tab:** result display, input field, a scientific keypad, a history panel (click an entry to reuse it) and your variables. Everything the terminal version evaluates works here, including functions you define, complex numbers and matrices.
+- **Matrices tab:** two editable grids (A and B, up to 6x6, cells accept expressions), one-click operations (A+B, A*B, A\\B, det, inv, rank, rref, nullspace, expm, cond, ...) and the result drawn as a grid. Use the result as the new A or B, or copy it. A and B are also stored as variables for the calculator tab.
 - **Equations tab:** type an equation or a linear system, optionally name the unknown, and get one card per solution. Click a card to copy its value.
 
 The interface uses Menlo from macOS. To use the original Ghost Signal fonts, place `VT323-Regular.ttf` and `Amanojaku.ttf` in a `fonts/` folder next to where you run `./mooncalc-gui`; they are picked up automatically and the app falls back to Menlo when they are missing.
@@ -107,12 +111,21 @@ Run `help functions` inside the program for the full list.
 ### Matrices
 
 ```
-[1,2;3,4]               rows separated by ';', columns by ','
-[1,2;3,4] * [5,6;7,8]   matrix product
-[1,2;3,4]^-1            inverse (also inv(M))
-det([1,2;3,4])          -2
-cross([1,0,0],[0,1,0])  [ 0  0  1 ]
+[1,2;3,4]                  rows separated by ';', columns by ','
+M(2,1)   v(3)              element access (1-based; v(k) for vectors)
+A*B   A^2   A^-1           product, power, inverse (also inv(A))
+A.*B   A./B   A.^2         element-wise operations
+A\b   linsolve(A,b)        solve A*x = b (reports no solution or infinitely many)
+rref(A)   nullspace(A)     reduced row echelon form, basis of the null space
+det(A)  rank(A)  trace(A)  transpose(A)  norm(A)  cond(A)  expm(A)
+diag(v)   diag(A)          vector to diagonal matrix, or diagonal of a matrix
+hcat(A,B)  vcat(A,B)       concatenate side by side or stacked
+row(A,i)  col(A,j)  sub(A,r1,r2,c1,c2)   rows, columns and submatrices
+reshape(A,r,c)  linspace(a,b,n)  eye(n)  zeros(r,c)  ones(r,c)
+dot(u,v)  cross(u,v)
 ```
+
+`cond` uses the 1-norm and returns `inf` for singular matrices. Write `2 .^[1,2,3]` or `2.^[1,2,3]` for element-wise powers with a scalar base.
 
 Statistics functions accept lists or matrices: `mean([1,2,3,4])`, `linreg([1,2,3],[2,4,6])` (returns slope, intercept, R²).
 

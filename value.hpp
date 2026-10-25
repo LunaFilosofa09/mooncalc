@@ -144,6 +144,100 @@ inline size_t rank(Matrix a) {
     return r;
 }
 
+inline Matrix rref(Matrix a, std::vector<size_t>* pivots = nullptr) {
+    Num eps = 1e-10L * std::max<Num>(1, maxAbs(a));
+    size_t r = 0;
+    for (size_t c = 0; c < a.cols && r < a.rows; ++c) {
+        size_t p = r;
+        for (size_t i = r + 1; i < a.rows; ++i)
+            if (std::abs(a.at(i, c)) > std::abs(a.at(p, c))) p = i;
+        if (std::abs(a.at(p, c)) <= eps) {
+            for (size_t i = r; i < a.rows; ++i) a.at(i, c) = 0;
+            continue;
+        }
+        for (size_t j = 0; j < a.cols; ++j) std::swap(a.at(p, j), a.at(r, j));
+        Complex d = a.at(r, c);
+        for (size_t j = 0; j < a.cols; ++j) a.at(r, j) /= d;
+        for (size_t i = 0; i < a.rows; ++i) {
+            if (i == r) continue;
+            Complex f = a.at(i, c);
+            if (f == Complex(0)) continue;
+            for (size_t j = 0; j < a.cols; ++j) a.at(i, j) -= f * a.at(r, j);
+        }
+        if (pivots) pivots->push_back(c);
+        ++r;
+    }
+    for (auto& z : a.data) {
+        if (std::fabs(z.real()) <= eps) z = Complex(0, z.imag());
+        if (std::fabs(z.imag()) <= eps) z = Complex(z.real(), 0);
+    }
+    return a;
+}
+
+inline Matrix nullspace(const Matrix& a) {
+    std::vector<size_t> pivots;
+    Matrix r = rref(a, &pivots);
+    std::vector<size_t> freeCols;
+    for (size_t c = 0; c < a.cols; ++c)
+        if (std::find(pivots.begin(), pivots.end(), c) == pivots.end()) freeCols.push_back(c);
+    if (freeCols.empty()) throw CalcError("nullspace is trivial (full column rank)");
+    Matrix n(a.cols, freeCols.size());
+    for (size_t k = 0; k < freeCols.size(); ++k) {
+        n.at(freeCols[k], k) = 1;
+        for (size_t i = 0; i < pivots.size(); ++i) n.at(pivots[i], k) = -r.at(i, freeCols[k]);
+    }
+    return n;
+}
+
+inline Matrix linsolve(const Matrix& a, const Matrix& b) {
+    if (a.rows != b.rows) throw CalcError("A and b must have the same number of rows");
+    Matrix aug(a.rows, a.cols + b.cols);
+    for (size_t i = 0; i < a.rows; ++i) {
+        for (size_t j = 0; j < a.cols; ++j) aug.at(i, j) = a.at(i, j);
+        for (size_t j = 0; j < b.cols; ++j) aug.at(i, a.cols + j) = b.at(i, j);
+    }
+    std::vector<size_t> pivots;
+    Matrix r = rref(aug, &pivots);
+    for (size_t p : pivots)
+        if (p >= a.cols) throw CalcError("the system has no solution");
+    if (pivots.size() < a.cols) throw CalcError("the system has infinitely many solutions (rank " + std::to_string(pivots.size()) + " < " + std::to_string(a.cols) + ")");
+    Matrix x(a.cols, b.cols);
+    for (size_t i = 0; i < a.cols; ++i)
+        for (size_t j = 0; j < b.cols; ++j) x.at(i, j) = r.at(i, a.cols + j);
+    return x;
+}
+
+inline Num norm1(const Matrix& a) {
+    Num best = 0;
+    for (size_t j = 0; j < a.cols; ++j) {
+        Num s = 0;
+        for (size_t i = 0; i < a.rows; ++i) s += std::abs(a.at(i, j));
+        best = std::max(best, s);
+    }
+    return best;
+}
+
+inline Matrix expm(const Matrix& a) {
+    if (a.rows != a.cols) throw CalcError("expm requires a square matrix");
+    Num norm = 0;
+    for (size_t i = 0; i < a.rows; ++i) {
+        Num s = 0;
+        for (size_t j = 0; j < a.cols; ++j) s += std::abs(a.at(i, j));
+        norm = std::max(norm, s);
+    }
+    int squarings = norm > 0.5L ? (int)std::ceil(std::log2(norm / 0.5L)) : 0;
+    Matrix scaled = a;
+    for (auto& z : scaled.data) z /= std::pow(2.0L, squarings);
+    Matrix result = identity(a.rows), term = identity(a.rows);
+    for (int k = 1; k <= 24; ++k) {
+        term = multiply(term, scaled);
+        for (auto& z : term.data) z /= (Num)k;
+        for (size_t i = 0; i < result.data.size(); ++i) result.data[i] += term.data[i];
+    }
+    for (int s = 0; s < squarings; ++s) result = multiply(result, result);
+    return result;
+}
+
 }
 
 namespace ops {
@@ -184,6 +278,17 @@ inline Value div(const Value& a, const Value& b) {
     return zip(a, b, "division", [](Complex x, Complex y) { return x / y; });
 }
 
+inline Value elementMul(const Value& a, const Value& b) {
+    return zip(a, b, "element-wise multiplication", [](Complex x, Complex y) { return x * y; });
+}
+
+inline Value elementDiv(const Value& a, const Value& b) {
+    return zip(a, b, "element-wise division", [](Complex x, Complex y) {
+        if (y == Complex(0)) throw CalcError("division by zero");
+        return x / y;
+    });
+}
+
 inline Value neg(const Value& a) { return zip(a, Value(Num(-1)), "negation", [](Complex x, Complex y) { return x * y; }); }
 
 inline Complex scalarPow(const Complex& a, const Complex& b) {
@@ -193,6 +298,16 @@ inline Complex scalarPow(const Complex& a, const Complex& b) {
     }
     if (a == Complex(0)) return b == Complex(0) ? Complex(1) : Complex(0);
     return std::pow(a, b);
+}
+
+inline Value elementPow(const Value& a, const Value& b) {
+    return zip(a, b, "element-wise power", [](Complex x, Complex y) { return scalarPow(x, y); });
+}
+
+inline Value leftDivide(const Value& a, const Value& b) {
+    if (!a.isMatrix) return div(b, a);
+    if (!b.isMatrix) throw CalcError("A\\b requires b to be a vector or matrix");
+    return Value(mat::linsolve(a.matrix, b.matrix));
 }
 
 inline Value pow(const Value& a, const Value& b) {
