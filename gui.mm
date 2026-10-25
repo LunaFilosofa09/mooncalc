@@ -43,7 +43,7 @@
     self.mtkView.device = self.device;
     self.mtkView.delegate = self;
     self.mtkView.preferredFramesPerSecond = 60;
-    self.mtkView.clearColor = MTLClearColorMake(0.035, 0.027, 0.059, 1.0);
+    self.mtkView.clearColor = MTLClearColorMake(0.0196, 0.0118, 0.0510, 1.0);
 
     ImGui_ImplOSX_Init(self.view);
     CGFloat scale = NSScreen.mainScreen.backingScaleFactor;
@@ -109,7 +109,7 @@
     self.window.minSize = NSMakeSize(760, 640);
     self.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
     self.window.titlebarAppearsTransparent = YES;
-    self.window.backgroundColor = [NSColor colorWithRed:0.035 green:0.027 blue:0.059 alpha:1.0];
+    self.window.backgroundColor = [NSColor colorWithRed:0.0196 green:0.0118 blue:0.0510 alpha:1.0];
     [self.window setContentSize:NSMakeSize(1120, 800)];
     [self.window center];
     [self.window makeKeyAndOrderFront:nil];

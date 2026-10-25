@@ -1,14 +1,15 @@
 # MoonCalc
 
-An interactive terminal scientific calculator written in C++17, with a black and purple interface and rounded borders. It supports complex numbers, matrices, user-defined functions, calculus, statistics, an equation and linear-system solver, terminal plots and unit conversion.
+An interactive terminal scientific calculator written in C++17, with a retro-futuristic "Ghost Signal" look: near-black CRT background, violet neon, square beveled panels and scanlines. It supports complex numbers, matrices, user-defined functions, calculus, statistics, an equation and linear-system solver, terminal plots and unit conversion.
 
 ```
-╭─ MoonCalc ────────────────────────────────────────╮
-│  scientific calculator in C++17                   │
-│                                                   │
-│  help  ·  solve x^2-4=0  ·  plot sin(x)  ·  quit  │
-╰───────────────────────────────────────────────────╯
-rad ❯ solve x^2-5*x+6=0
+┌─ MOONCALC ───────────────────────────────────────────┐
+│  SIGNAL // SCIENTIFIC CALCULATOR                     │
+│  STATUS: OK                                          │
+│                                                      │
+│  help  //  solve x^2-4=0  //  plot sin(x)  //  quit  │
+└──────────────────────────────────────────────────────┘
+rad > solve x^2-5*x+6=0
   quadratic equation
   ▸ x1 = 2
   ▸ x2 = 3
@@ -21,7 +22,7 @@ rad ❯ solve x^2-5*x+6=0
   <img src="docs/equations.png" width="48%" alt="Equations tab">
 </p>
 
-A native macOS app with a black and purple theme and rounded controls, built with [Dear ImGui](https://github.com/ocornut/imgui) on Metal.
+A native macOS app in the Ghost Signal style (CRT scanlines and vignette, violet neon glow, beveled panels, corner brackets, monospaced HUD labels), built with [Dear ImGui](https://github.com/ocornut/imgui) on Metal.
 
 ```bash
 make gui
@@ -30,6 +31,8 @@ make gui
 
 - **Calculator tab:** result display, input field, a scientific keypad, a history panel (click an entry to reuse it) and your variables. Everything the terminal version evaluates works here, including functions you define, complex numbers and matrices.
 - **Equations tab:** type an equation or a linear system, optionally name the unknown, and get one card per solution. Click a card to copy its value.
+
+The interface uses Menlo from macOS. To use the original Ghost Signal fonts, place `VT323-Regular.ttf` and `Amanojaku.ttf` in a `fonts/` folder next to where you run `./mooncalc-gui`; they are picked up automatically and the app falls back to Menlo when they are missing.
 
 It needs macOS with the Xcode Command Line Tools (`xcode-select --install`). Dear ImGui v1.91.9 is vendored in `third_party/imgui` (MIT license), so nothing else has to be installed.
 

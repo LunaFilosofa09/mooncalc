@@ -22,12 +22,12 @@ struct Rgb {
     int r, g, b;
 };
 
-const Rgb kBlack{14, 11, 22};
-const Rgb kBorder{139, 92, 246};
-const Rgb kAccent{167, 139, 250};
-const Rgb kText{221, 214, 254};
-const Rgb kDim{113, 113, 138};
-const Rgb kError{244, 114, 182};
+const Rgb kBlack{11, 8, 32};
+const Rgb kBorder{173, 159, 255};
+const Rgb kAccent{185, 168, 255};
+const Rgb kText{241, 237, 255};
+const Rgb kDim{154, 143, 208};
+const Rgb kError{255, 59, 138};
 
 bool colorEnabled = false;
 
@@ -67,24 +67,24 @@ void panel(const std::string& title, const std::vector<std::string>& lines, size
     const std::string edge = base + fg(kBorder);
 
     size_t titleSpace = title.empty() ? 0 : visibleLength(title) + 2;
-    std::cout << edge << "╭─";
+    std::cout << edge << "┌─";
     if (!title.empty()) std::cout << " " << bold() << fg(kAccent) << title << reset() << edge << " ";
-    std::cout << repeat("─", inner - 1 - titleSpace) << "╮" << reset() << "\n";
+    std::cout << repeat("─", inner - 1 - titleSpace) << "┐" << reset() << "\n";
 
     for (const auto& l : lines) {
         std::cout << edge << "│" << base << fg(kText) << "  " << l << std::string(inner - 2 - visibleLength(l), ' ') << edge
                   << "│" << reset() << "\n";
     }
-    std::cout << edge << "╰" << repeat("─", inner) << "╯" << reset() << "\n";
+    std::cout << edge << "└" << repeat("─", inner) << "┘" << reset() << "\n";
 }
 
 void banner() {
-    panel("MoonCalc", {"scientific calculator in C++17", "", "help  ·  solve x^2-4=0  ·  plot sin(x)  ·  quit"});
+    panel("MOONCALC", {"SIGNAL // SCIENTIFIC CALCULATOR", "STATUS: OK", "", "help  //  solve x^2-4=0  //  plot sin(x)  //  quit"});
 }
 
 void help(const std::string& topic) {
     if (topic == "functions") {
-        panel("Functions",
+        panel("FUNCTIONS",
               {"Trigonometry  sin cos tan asin acos atan atan2",
                "Hyperbolic    sinh cosh tanh asinh acosh atanh",
                "Powers/logs   sqrt cbrt exp ln log log2 logb(x,b)",
@@ -109,7 +109,7 @@ void help(const std::string& topic) {
                "              (an optional variable name goes after expr)"});
         return;
     }
-    panel("Help",
+    panel("HELP",
           {"Operators    + - * / %  ^ (power)  ! (factorial)",
            "Implicit     2pi  3(4+1)  2sin(x)  (same precedence as *)",
            "Constants    pi  e  i  inf  ans (last result)",
@@ -327,7 +327,7 @@ void plot(Calculator& calc, const std::string& rest) {
 }
 
 std::string prompt(bool degrees) {
-    return fg(kDim) + (degrees ? "deg " : "rad ") + fg(kBorder) + bold() + "❯ " + reset() + fg(kText);
+    return fg(kDim) + (degrees ? "deg " : "rad ") + fg(kBorder) + bold() + "> " + reset() + fg(kText);
 }
 
 }
